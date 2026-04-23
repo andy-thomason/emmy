@@ -68,6 +68,9 @@ pub enum Type {
     Async(TypeId),
     /// `channel<T>`
     Channel(TypeId),
+    /// `dyn TraitName` — a fat pointer (data pointer + vtable pointer)
+    /// carrying the trait name for type-checking method calls.
+    Dyn(String),
     /// Unconstrained integer literal — defaults to `i64` if never unified.
     IntLit,
     /// Unconstrained float literal — defaults to `f64` if never unified.
@@ -289,6 +292,7 @@ impl TypeStore {
 
             (Entry::Bound(Type::Async(a)),   Entry::Bound(Type::Async(b)))   => self.unify(a, b),
             (Entry::Bound(Type::Channel(a)), Entry::Bound(Type::Channel(b))) => self.unify(a, b),
+            (Entry::Bound(Type::Dyn(a)),     Entry::Bound(Type::Dyn(b)))     => a == b,
 
             _ => false,
         }
@@ -510,6 +514,9 @@ impl<'src, 'res> TypeChecker<'src, 'res> {
                 } else {
                     self.store.intern(Type::Error)
                 }
+            }
+            TypeExprKind::Dyn(trait_name) => {
+                self.store.intern(Type::Dyn((*trait_name).to_string()))
             }
             TypeExprKind::Error(_) => self.store.intern(Type::Error),
         }
@@ -890,6 +897,13 @@ impl<'src, 'res> TypeChecker<'src, 'res> {
                 }
             }
             ItemKind::ImplBlock(i) => {
+                for method in &i.methods { self.walk_function(method); }
+            }
+            ItemKind::TraitDef(_) => {
+                // Trait definitions carry no executable code; nothing to infer.
+            }
+            ItemKind::ImplFor(i) => {
+                // Type-check each concrete method body.
                 for method in &i.methods { self.walk_function(method); }
             }
             ItemKind::ActorDef(a) => {

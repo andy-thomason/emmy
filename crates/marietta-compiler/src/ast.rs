@@ -35,6 +35,8 @@ pub enum TypeExprKind<'src> {
         elem: Box<TypeExpr<'src>>,
         len:  u64,
     },
+    /// A `dyn TraitName` type (dynamic dispatch through a vtable).
+    Dyn(&'src str),
     /// A parse error in a type position.
     Error(&'static str),
 }
@@ -224,6 +226,8 @@ pub enum ItemKind<'src> {
     FunctionDef(FunctionDef<'src>),
     StructDef(StructDef<'src>),
     ImplBlock(ImplBlock<'src>),
+    TraitDef(TraitDef<'src>),
+    ImplFor(ImplFor<'src>),
     ActorDef(ActorDef<'src>),
     /// A top-level statement (assignment, import, etc.).
     Stmt(Stmt<'src>),
@@ -261,6 +265,34 @@ pub struct StructDef<'src> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplBlock<'src> {
     pub src: &'src str,
+    pub type_name: &'src str,
+    pub methods: Vec<FunctionDef<'src>>,
+}
+
+/// The signature of one method in a `trait` definition (no body).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitMethodSig<'src> {
+    pub src: &'src str,
+    pub name: &'src str,
+    pub params: Vec<Param<'src>>,
+    pub return_type: Option<TypeExpr<'src>>,
+}
+
+/// A `trait Foo:` definition — only dyn-safe method signatures.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitDef<'src> {
+    pub src: &'src str,
+    pub name: &'src str,
+    pub methods: Vec<TraitMethodSig<'src>>,
+}
+
+/// An `impl Trait for Type:` block — concrete method implementations.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImplFor<'src> {
+    pub src: &'src str,
+    /// The trait being implemented.
+    pub trait_name: &'src str,
+    /// The concrete type that implements it.
     pub type_name: &'src str,
     pub methods: Vec<FunctionDef<'src>>,
 }

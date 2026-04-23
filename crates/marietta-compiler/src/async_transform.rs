@@ -132,6 +132,13 @@ pub fn transform<'src>(module: &Module<'src>) -> AsyncTransformResult<'src> {
                     }
                 }
             }
+            ItemKind::ImplFor(i) => {
+                for method in &i.methods {
+                    if method.is_async {
+                        machines.push(build_machine(method, &mut diagnostics));
+                    }
+                }
+            }
             ItemKind::ActorDef(ad) => {
                 for method in &ad.methods {
                     if method.is_async {

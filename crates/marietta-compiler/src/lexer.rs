@@ -39,9 +39,9 @@ pub enum Token<'src> {
 /// Keywords recognised by Mandy.
 const KEYWORDS: &[&str] = &[
     "actor", "and", "as", "async", "await", "break", "channel", "class",
-    "continue", "def", "elif", "else", "except", "finally", "for", "from",
+    "continue", "def", "dyn", "elif", "else", "except", "finally", "for", "from",
     "if", "impl", "import", "in", "is", "lambda", "let", "None", "not", "or",
-    "pass", "raise", "return", "rpc", "self", "struct", "True", "False",
+    "pass", "raise", "return", "rpc", "self", "struct", "trait", "True", "False",
     "try", "var", "while", "with", "yield",
 ];
 

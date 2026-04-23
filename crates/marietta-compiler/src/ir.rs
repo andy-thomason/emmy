@@ -307,6 +307,15 @@ pub fn lower<'src>(
                     functions.push(lowerer.lower_fn(m));
                 }
             }
+            ItemKind::ImplFor(i) => {
+                // Concrete method bodies compile to regular functions.
+                for m in &i.methods {
+                    functions.push(lowerer.lower_fn(m));
+                }
+            }
+            ItemKind::TraitDef(_) => {
+                // Trait defs are signatures only — no IR emitted.
+            }
             ItemKind::ActorDef(ad) => {
                 for m in &ad.methods {
                     functions.push(lowerer.lower_fn(m));

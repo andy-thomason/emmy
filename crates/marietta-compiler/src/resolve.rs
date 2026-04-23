@@ -58,6 +58,8 @@ enum BindingKind {
     Struct,
     /// Actor name.
     Actor,
+    /// Trait name.
+    Trait,
     /// Loop variable (`for x in …`).
     LoopVar,
     /// Implicit assignment (`x = …` with no `var`/`let`).
@@ -113,6 +115,23 @@ pub enum ResolveDiagnostic<'src> {
         name: &'src str,
         previous_src: &'src str,
     },
+    /// A trait method lacks `self` as its first parameter — not dyn-safe.
+    TraitMethodNotDynSafe {
+        src: &'src str,
+        trait_name: &'src str,
+        method_name: &'src str,
+    },
+    /// `impl Trait for Type` references an unknown trait name.
+    ImplForUnknownTrait {
+        src: &'src str,
+        trait_name: &'src str,
+    },
+    /// `impl Trait for Type` is missing one or more required methods.
+    ImplForMissingMethod {
+        src: &'src str,
+        trait_name: &'src str,
+        method_name: &'src str,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +155,8 @@ struct Resolver<'src> {
     scopes: Vec<Scope<'src>>,
     resolutions: ResolutionMap,
     diagnostics: Vec<ResolveDiagnostic<'src>>,
+    /// Maps trait name → list of required method names (for impl-for checking).
+    trait_methods: HashMap<&'src str, Vec<&'src str>>,
 }
 
 impl<'src> Resolver<'src> {
@@ -145,6 +166,7 @@ impl<'src> Resolver<'src> {
             scopes: vec![Scope::new()], // module-level scope
             resolutions: HashMap::new(),
             diagnostics: Vec::new(),
+            trait_methods: HashMap::new(),
         }
     }
 
@@ -406,6 +428,46 @@ impl<'src> Resolver<'src> {
                     self.walk_function(method);
                 }
             }
+            ItemKind::TraitDef(t) => {
+                // Declaration was already hoisted; only run dyn-safety checks here.
+                for method in &t.methods {
+                    let is_dyn_safe = method.params.first()
+                        .map(|p| p.name == "self")
+                        .unwrap_or(false);
+                    if !is_dyn_safe {
+                        self.diagnostics.push(ResolveDiagnostic::TraitMethodNotDynSafe {
+                            src: method.src,
+                            trait_name: t.name,
+                            method_name: method.name,
+                        });
+                    }
+                }
+            }
+            ItemKind::ImplFor(i) => {
+                // Resolve both the trait and the type.
+                self.resolve_name(i.src, i.trait_name);
+                self.resolve_name(i.src, i.type_name);
+                // Check all trait methods are implemented.
+                if let Some(required) = self.trait_methods.get(i.trait_name).cloned() {
+                    for req in &required {
+                        if !i.methods.iter().any(|m| m.name == *req) {
+                            self.diagnostics.push(ResolveDiagnostic::ImplForMissingMethod {
+                                src: i.src,
+                                trait_name: i.trait_name,
+                                method_name: req,
+                            });
+                        }
+                    }
+                } else {
+                    self.diagnostics.push(ResolveDiagnostic::ImplForUnknownTrait {
+                        src: i.src,
+                        trait_name: i.trait_name,
+                    });
+                }
+                for method in &i.methods {
+                    self.walk_function(method);
+                }
+            }
             ItemKind::ActorDef(a) => {
                 self.declare(a.name, a.src, BindingKind::Actor);
                 for field in &a.fields {
@@ -421,7 +483,7 @@ impl<'src> Resolver<'src> {
     }
 
     fn walk_module(&mut self, module: &Module<'src>) {
-        // First pass: hoist all top-level function/struct/actor names so that
+        // First pass: hoist all top-level function/struct/actor/trait names so that
         // forward references within the module work.
         for item in &module.items {
             match &item.kind {
@@ -433,6 +495,13 @@ impl<'src> Resolver<'src> {
                 }
                 ItemKind::ActorDef(a) => {
                     self.declare(a.name, a.src, BindingKind::Actor);
+                }
+                ItemKind::TraitDef(t) => {
+                    self.declare(t.name, t.src, BindingKind::Trait);
+                    // Pre-populate trait_methods so ImplFor can check completeness
+                    // even when the impl comes before the trait in source order.
+                    let names: Vec<&'src str> = t.methods.iter().map(|m| m.name).collect();
+                    self.trait_methods.insert(t.name, names);
                 }
                 _ => {}
             }
@@ -453,6 +522,8 @@ impl<'src> Resolver<'src> {
                     }
                     for method in &a.methods { self.walk_function(method); }
                 }
+                // TraitDef already declared in hoist pass; only do dyn-safety checks.
+                ItemKind::TraitDef(_) => self.walk_item(item),
                 _ => self.walk_item(item),
             }
         }
@@ -639,6 +710,65 @@ mod tests {
             let base = src.as_ptr() as usize;
             assert!(diag_ptr >= base && diag_ptr < base + src.len());
         }
+    }
+
+    // ---- Trait & dyn tests ------------------------------------------------
+
+    #[test]
+    fn trait_def_no_error() {
+        // A trait whose only method has `self` is dyn-safe.
+        assert!(is_clean("trait Drawable:\n    def draw(self) -> None:\n"));
+    }
+
+    #[test]
+    fn trait_method_not_dyn_safe() {
+        // A method without `self` violates dyn-safety.
+        let diags = run("trait Foo:\n    def static_method() -> None:\n").diagnostics;
+        assert!(
+            diags.iter().any(|d| matches!(d,
+                ResolveDiagnostic::TraitMethodNotDynSafe { trait_name: "Foo", method_name: "static_method", .. }
+            )),
+            "expected TraitMethodNotDynSafe, got: {:?}", diags
+        );
+    }
+
+    #[test]
+    fn impl_for_complete() {
+        // All methods implemented — no diagnostics.
+        assert!(is_clean(
+            "struct Dog:\n    x: u8\n\
+             trait Animal:\n    def speak(self) -> None:\n\
+             impl Animal for Dog:\n    def speak(self) -> None:\n        pass\n"
+        ));
+    }
+
+    #[test]
+    fn impl_for_missing_method() {
+        let diags = run(
+            "struct Cat:\n    x: u8\n\
+             trait Animal:\n    def speak(self) -> None:\n\
+             impl Animal for Cat:\n    def other(self) -> None:\n        pass\n"
+        ).diagnostics;
+        assert!(
+            diags.iter().any(|d| matches!(d,
+                ResolveDiagnostic::ImplForMissingMethod { trait_name: "Animal", method_name: "speak", .. }
+            )),
+            "expected ImplForMissingMethod, got: {:?}", diags
+        );
+    }
+
+    #[test]
+    fn impl_for_unknown_trait() {
+        let diags = run(
+            "struct Dog:\n    x: u8\n\
+             impl NoSuchTrait for Dog:\n    def speak(self) -> None:\n        pass\n"
+        ).diagnostics;
+        assert!(
+            diags.iter().any(|d| matches!(d,
+                ResolveDiagnostic::ImplForUnknownTrait { trait_name: "NoSuchTrait", .. }
+            )),
+            "expected ImplForUnknownTrait, got: {:?}", diags
+        );
     }
 }
 

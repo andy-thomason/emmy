@@ -152,6 +152,21 @@ impl<'src> Parser<'src> {
     fn parse_type_expr(&mut self) -> TypeExpr<'src> {
         let start = self.current_src();
 
+        // `dyn TraitName` — dynamic dispatch type
+        if matches!(self.peek(), Token::Keyword("dyn")) {
+            self.advance();
+            let trait_name = match self.peek() {
+                Token::Identifier(s) => { let s = *s; self.advance(); s }
+                _ => {
+                    let bad = self.current_src();
+                    self.diagnostics.push(Diagnostic { src: bad, message: "expected trait name after dyn" });
+                    return TypeExpr { src: bad, kind: TypeExprKind::Error("expected trait name after dyn") };
+                }
+            };
+            let src = self.src_from(start);
+            return TypeExpr { src, kind: TypeExprKind::Dyn(trait_name) };
+        }
+
         // Fixed-size array type `[T; N]`
         if matches!(self.peek(), Token::Punctuation("[")) {
             self.advance(); // `[`
@@ -775,6 +790,93 @@ impl<'src> Parser<'src> {
         ImplBlock { src: self.src_from(start), type_name, methods }
     }
 
+    fn parse_trait_def(&mut self) -> TraitDef<'src> {
+        let start = self.current_src();
+        self.expect_kw("trait");
+        let name = self.expect_ident().unwrap_or("");
+        self.expect_punct(":");
+        self.skip_newlines();
+        if !matches!(self.peek(), Token::Indent(_)) {
+            let bad = self.current_src();
+            self.diagnostics.push(Diagnostic { src: bad, message: "expected indented trait body" });
+            return TraitDef { src: self.src_from(start), name, methods: Vec::new() };
+        }
+        self.advance(); // Indent
+        let mut methods = Vec::new();
+        loop {
+            self.skip_newlines();
+            if matches!(self.peek(), Token::Dedent | Token::Eof) { break; }
+            let sig_start = self.current_src();
+            // async keyword is allowed but ignored for now (reserved)
+            if matches!(self.peek(), Token::Keyword("async")) { self.advance(); }
+            if !matches!(self.peek(), Token::Keyword("def")) {
+                let bad = self.current_src();
+                self.diagnostics.push(Diagnostic { src: bad, message: "expected def in trait body" });
+                self.synchronise();
+                continue;
+            }
+            self.advance(); // def
+            let mname = self.expect_ident().unwrap_or("");
+            let params = self.parse_param_list();
+            let return_type = if matches!(self.peek(), Token::Punctuation("->")) {
+                self.advance();
+                Some(self.parse_type_expr())
+            } else { None };
+            // Consume the trailing `:` of the signature line.
+            if matches!(self.peek(), Token::Punctuation(":")) { self.advance(); }
+            if matches!(self.peek(), Token::Newline) { self.advance(); }
+            // If a body block was mistakenly indented, skip it entirely.
+            if matches!(self.peek(), Token::Indent(_)) {
+                self.advance(); // Indent
+                // skip until matching Dedent
+                let mut depth = 1usize;
+                loop {
+                    match self.peek() {
+                        Token::Eof => break,
+                        Token::Indent(_) => { depth += 1; self.advance(); }
+                        Token::Dedent => {
+                            self.advance();
+                            depth -= 1;
+                            if depth == 0 { break; }
+                        }
+                        _ => { self.advance(); }
+                    }
+                }
+            }
+            let sig_src = self.src_from(sig_start);
+            methods.push(TraitMethodSig { src: sig_src, name: mname, params, return_type });
+        }
+        if matches!(self.peek(), Token::Dedent) { self.advance(); }
+        TraitDef { src: self.src_from(start), name, methods }
+    }
+
+    fn parse_impl_for(&mut self) -> ImplFor<'src> {
+        let start = self.current_src();
+        self.expect_kw("impl");
+        let trait_name = self.expect_ident().unwrap_or("");
+        self.expect_kw("for");
+        let type_name = self.expect_ident().unwrap_or("");
+        self.expect_punct(":");
+        self.skip_newlines();
+        if !matches!(self.peek(), Token::Indent(_)) {
+            let bad = self.current_src();
+            self.diagnostics.push(Diagnostic { src: bad, message: "expected indented impl body" });
+            return ImplFor { src: self.src_from(start), trait_name, type_name, methods: Vec::new() };
+        }
+        self.advance(); // Indent
+        let mut methods = Vec::new();
+        loop {
+            self.skip_newlines();
+            if matches!(self.peek(), Token::Dedent | Token::Eof) { break; }
+            let is_async = if matches!(self.peek(), Token::Keyword("async")) {
+                self.advance(); true
+            } else { false };
+            methods.push(self.parse_function_def(is_async));
+        }
+        if matches!(self.peek(), Token::Dedent) { self.advance(); }
+        ImplFor { src: self.src_from(start), trait_name, type_name, methods }
+    }
+
     fn parse_actor_def(&mut self) -> ActorDef<'src> {
         let start = self.current_src();
         self.expect_kw("actor");
@@ -833,8 +935,19 @@ impl<'src> Parser<'src> {
                 Item { src: self.src_from(start), kind: ItemKind::StructDef(s) }
             }
             Token::Keyword("impl") => {
-                let i = self.parse_impl_block();
-                Item { src: self.src_from(start), kind: ItemKind::ImplBlock(i) }
+                // Distinguish `impl Trait for Type:` from `impl Type:`
+                // tokens[pos]=impl, tokens[pos+1]=Name, tokens[pos+2]=for|:
+                if matches!(self.tokens.get(self.pos + 2), Some(Token::Keyword("for"))) {
+                    let i = self.parse_impl_for();
+                    Item { src: self.src_from(start), kind: ItemKind::ImplFor(i) }
+                } else {
+                    let i = self.parse_impl_block();
+                    Item { src: self.src_from(start), kind: ItemKind::ImplBlock(i) }
+                }
+            }
+            Token::Keyword("trait") => {
+                let t = self.parse_trait_def();
+                Item { src: self.src_from(start), kind: ItemKind::TraitDef(t) }
             }
             Token::Keyword("actor") => {
                 let a = self.parse_actor_def();
@@ -1211,6 +1324,56 @@ mod tests {
             ItemKind::Stmt(Stmt { kind: StmtKind::Expr(Expr { kind: ExprKind::BinOp { op, .. }, .. }), .. })
             if *op == "%dot%"
         ));
+    }
+
+    // ---- Trait & dyn types -------------------------------------------------
+
+    #[test]
+    fn trait_def_parsed() {
+        let r = clean("trait Drawable:\n    def draw(self) -> None:\n");
+        assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+        if let ItemKind::TraitDef(t) = &r.module.items[0].kind {
+            assert_eq!(t.name, "Drawable");
+            assert_eq!(t.methods.len(), 1);
+            assert_eq!(t.methods[0].name, "draw");
+        } else {
+            panic!("expected TraitDef, got {:?}", r.module.items[0].kind);
+        }
+    }
+
+    #[test]
+    fn impl_for_parsed() {
+        let r = clean(
+            "struct Dog:\n    x: u8\n\
+             trait Animal:\n    def speak(self) -> None:\n\
+             impl Animal for Dog:\n    def speak(self) -> None:\n        pass\n",
+        );
+        assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+        if let ItemKind::ImplFor(i) = &r.module.items[2].kind {
+            assert_eq!(i.trait_name, "Animal");
+            assert_eq!(i.type_name, "Dog");
+            assert_eq!(i.methods.len(), 1);
+        } else {
+            panic!("expected ImplFor, got {:?}", r.module.items[2].kind);
+        }
+    }
+
+    #[test]
+    fn dyn_type_annotation_parsed() {
+        let r = clean("var x: dyn Animal = None\n");
+        assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+        if let ItemKind::Stmt(s) = &r.module.items[0].kind {
+            if let StmtKind::VarDecl { annotation: Some(ann), .. } = &s.kind {
+                assert!(
+                    matches!(&ann.kind, TypeExprKind::Dyn(n) if *n == "Animal"),
+                    "unexpected annotation kind: {:?}", ann.kind
+                );
+            } else {
+                panic!("expected VarDecl stmt with annotation");
+            }
+        } else {
+            panic!("expected Stmt item");
+        }
     }
 
     // ---- Error recovery ----------------------------------------------------
