@@ -160,13 +160,21 @@ the pointer. Pointers are also allowed as in Rust.
 
 ### 9. Code Generation (`src/codegen.rs`)
 
-- Target: collect LLVM IR using Inkwell. Execute the code as a JIT.
-- Each IR basic block maps to an LLVM basic block.
-- Integer types wider than 64 bits use LLVM's arbitrary-width integers (`i128`,
-  `i256`, etc.) or, where not natively supported, arrays of `i64` with helper
-  functions.
-- The async state-machine structs are plain LLVM structs.
-- Later: add a Cranelift backend for faster debug builds without an LLVM dependency.
+- Target: Cranelift (`cranelift-codegen`, `cranelift-frontend`, `cranelift-jit`,
+  `cranelift-module`). No LLVM dependency required.
+- Each IR basic block is translated to a Cranelift `Block`; values are SSA
+  `cranelift_codegen::ir::Value`s.
+- Use `cranelift_jit::JITModule` for immediate execution (`mandy run`) and
+  `cranelift_object::ObjectModule` to emit native object files (`mandy build`).
+- Integer types up to 64 bits map directly to Cranelift's `I8`/`I16`/`I32`/`I64`
+  types. Wider integers (up to 2048 bits) are lowered to arrays of `I64` limbs
+  with helper functions generated inline (add-with-carry, shift, etc.).
+- Float types: `f32` → `F32`, `f64` → `F64`; other float widths are software-
+  emulated via helper functions synthesised during code generation.
+- The async state-machine structs are lowered to Cranelift stack slots /
+  heap-allocated blobs whose layout is computed during IR lowering.
+- Function signatures are derived from the type-checked IR; the calling
+  convention follows the platform ABI via Cranelift's `isa::CallConv`.
 
 ### 10. Runtime (`src/runtime/`)
 
