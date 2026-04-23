@@ -208,11 +208,11 @@ Multiplying slices with %*% applies tensor multiply rules yielding an array. Bin
 
 ### 13. Test Suite
 
-- `tests/` directory with `.marietta` source files and expected `.stdout` / `.stderr`
+- `tests/` directory with `.ma` source files and expected `.stdout` / `.stderr`
   snapshots.
-- `tests/fib256.marietta` — 256-bit Fibonacci using `u256`.
-- `tests/matmul.marietta` — matrix multiply over `f32`.
-- `tests/actors.marietta` — a counter actor demonstrating RPC.
-- `tests/channels.marietta` — producer / consumer with a bounded channel.
+- `tests/fib256.ma` — 256-bit Fibonacci using `u256`.
+- `tests/matmul.ma` — matrix multiply over `f32`.
+- `tests/actors.ma` — a counter actor demonstrating RPC.
+- `tests/channels.ma` — producer / consumer with a bounded channel.
 - Run via `cargo test`; each test compiles and executes the file and diffs output.
 

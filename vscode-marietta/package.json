@@ -1,0 +1,31 @@
+{
+  "name": "vscode-marietta",
+  "displayName": "Marietta",
+  "description": "Language support for the Marietta programming language (.ma files)",
+  "version": "0.1.0",
+  "publisher": "andy-thomason",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/andy-thomason/marietta"
+  },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "marietta",
+        "aliases": ["Marietta", "marietta"],
+        "extensions": [".ma"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "marietta",
+        "scopeName": "source.marietta",
+        "path": "./syntaxes/marietta.tmLanguage.json"
+      }
+    ]
+  }
+}
