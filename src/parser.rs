@@ -247,6 +247,8 @@ impl<'src> Parser<'src> {
                 Token::Punctuation("*") | Token::Punctuation("/")
                 | Token::Punctuation("//") | Token::Punctuation("%") => (22, 23),
                 Token::Punctuation("**")                  => (26, 25), // right-assoc
+                // User-defined %…% infix operators — same precedence as *
+                Token::Punctuation(s) if s.starts_with('%') && s.ends_with('%') && s.len() > 1 => (22, 23),
                 // Postfix
                 Token::Punctuation("(")                   => (30, 0),
                 Token::Punctuation("[")                   => (30, 0),
@@ -1146,6 +1148,28 @@ mod tests {
             assert_eq!(a.fields.len(), 1);
             assert_eq!(a.methods.len(), 1);
         } else { panic!("expected ActorDef"); }
+    }
+
+    // ---- User-defined %…% operators ------------------------------------
+
+    #[test]
+    fn percent_op_matmul_parsed() {
+        let m = module("a %*% b\n");
+        assert!(matches!(
+            &m.items[0].kind,
+            ItemKind::Stmt(Stmt { kind: StmtKind::Expr(Expr { kind: ExprKind::BinOp { op, .. }, .. }), .. })
+            if *op == "%*%"
+        ));
+    }
+
+    #[test]
+    fn percent_op_custom_parsed() {
+        let m = module("x %dot% y\n");
+        assert!(matches!(
+            &m.items[0].kind,
+            ItemKind::Stmt(Stmt { kind: StmtKind::Expr(Expr { kind: ExprKind::BinOp { op, .. }, .. }), .. })
+            if *op == "%dot%"
+        ));
     }
 
     // ---- Error recovery ----------------------------------------------------

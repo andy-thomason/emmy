@@ -321,6 +321,22 @@ impl<'src> Lexer<'src> {
 
     /// Scan a punctuation / operator token.  We try two-character operators
     /// first, then fall back to single-character.
+    /// Scan a `%…%` user-defined infix operator token.
+    /// The opening `%` has been peeked but not consumed.
+    fn scan_percent_op(&mut self) -> Token<'src> {
+        let start = self.pos;
+        self.advance(); // opening '%'
+        // Consume the operator name (anything except '%', newline, or EOF)
+        self.take_while(|c| c != '%' && c != '\n' && c != '\r');
+        if self.peek() == Some('%') {
+            self.advance(); // closing '%'
+            Token::Punctuation(&self.src[start..self.pos])
+        } else {
+            // Unterminated — treat the bare '%' as a regular punctuation token.
+            Token::Punctuation(&self.src[start..start + 1])
+        }
+    }
+
     fn scan_punctuation(&mut self) -> Token<'src> {
         let start = self.pos;
         let two = &self.src[self.pos..self.src.len().min(self.pos + 2)];
@@ -414,6 +430,9 @@ impl<'src> Lexer<'src> {
             }
 
             Some('#') => self.scan_comment(),
+
+            // User-defined infix operators: %name% (e.g. %*%, %+%, %my_op%)
+            Some('%') => self.scan_percent_op(),
 
             Some(q @ ('"' | '\'')) => self.scan_string(q),
 
@@ -614,6 +633,35 @@ mod tests {
         let src = "a\n\nb\n";
         let tokens = lex_no_eof(src);
         assert!(!tokens.iter().any(|t| matches!(t, Token::Indent(_))));
+    }
+
+    // ---- User-defined %…% operators ------------------------------------
+
+    #[test]
+    fn percent_op_matmul() {
+        assert_eq!(lex_no_eof("%*%"), vec![Token::Punctuation("%*%")]);
+    }
+
+    #[test]
+    fn percent_op_custom() {
+        assert_eq!(lex_no_eof("%my_op%"), vec![Token::Punctuation("%my_op%")]);
+    }
+
+    #[test]
+    fn percent_op_in_expr() {
+        let tokens = lex_no_eof("a %*% b");
+        assert_eq!(tokens, vec![
+            Token::Identifier("a"),
+            Token::Punctuation("%*%"),
+            Token::Identifier("b"),
+        ]);
+    }
+
+    #[test]
+    fn percent_op_unterminated_falls_back_to_mod() {
+        // A lone '%' with no closing '%' becomes a plain '%' punctuation token.
+        let tokens = lex_no_eof("%");
+        assert_eq!(tokens, vec![Token::Punctuation("%")]);
     }
 
     // ---- Tab rejection ---------------------------------------------------
