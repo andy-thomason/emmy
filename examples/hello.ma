@@ -5,6 +5,9 @@
 #
 # Build:   marietta build hello.ma
 # Run:     marietta run   hello.ma
+#
+# Note: Full string literal support is in development.
+# For now, demonstrating basic print with integers.
 
 def greet(name: u64) -> u64:
     # In a future release `name` will be a String.  For now we accept a code

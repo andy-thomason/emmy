@@ -39,6 +39,48 @@ fn read_source(file: &PathBuf) -> Option<String> {
     }
 }
 
+/// Load the standard library and prepend it to the user's source code.
+///
+/// The std module provides core traits and functions available in all programs.
+/// It's automatically included before the user's code, making all std definitions
+/// available without explicit imports.
+fn load_with_stdlib(user_source: &str) -> String {
+    // Try to find std.ma in various locations:
+    // 1. Relative to the executable (../crates/marietta/std.ma)
+    // 2. Relative to current directory (./crates/marietta/std.ma)
+    
+    let exe_path = std::env::current_exe().ok();
+    let mut std_paths = vec![];
+    
+    if let Some(exe) = exe_path {
+        // Build directory structure: target/debug/marietta -> crates/marietta/std.ma
+        if let Some(parent) = exe.parent() {
+            std_paths.push(parent.parent().map(|p| p.join("crates/marietta/std.ma")));
+        }
+    }
+    
+    // Also try from current working directory
+    std_paths.push(Some(std::path::PathBuf::from("crates/marietta/std.ma")));
+    std_paths.push(Some(std::path::PathBuf::from("./std.ma")));
+    
+    let mut std_source = String::new();
+    for path_opt in std_paths {
+        if let Some(path) = path_opt {
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                std_source = contents;
+                break;
+            }
+        }
+    }
+    
+    if std_source.is_empty() {
+        eprintln!("warning: could not load standard library");
+    }
+    
+    // Combine std library with user source, separated by newlines
+    format!("{}\n\n# User code:\n{}", std_source, user_source)
+}
+
 fn print_result(result: &pipeline::PipelineResult) {
     for msg in &result.diagnostics {
         eprintln!("{msg}");
@@ -51,23 +93,26 @@ fn main() {
     let success = match cli.command {
         Command::Check { file } => {
             let Some(source) = read_source(&file) else { std::process::exit(1) };
-            let result = pipeline::check(&source);
+            let source_with_std = load_with_stdlib(&source);
+            let result = pipeline::check(&source_with_std);
             print_result(&result);
             result.success
         }
 
         Command::Build { file, output } => {
             let Some(source) = read_source(&file) else { std::process::exit(1) };
+            let source_with_std = load_with_stdlib(&source);
             let name   = file.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             let output = output.unwrap_or_else(|| file.with_extension("o"));
-            let result = pipeline::build(&source, &name, &output);
+            let result = pipeline::build(&source_with_std, &name, &output);
             print_result(&result);
             result.success
         }
 
         Command::Run { file } => {
             let Some(source) = read_source(&file) else { std::process::exit(1) };
-            let result = pipeline::run(&source);
+            let source_with_std = load_with_stdlib(&source);
+            let result = pipeline::run(&source_with_std);
             print_result(&result);
             result.success
         }

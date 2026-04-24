@@ -84,6 +84,7 @@ fn to_cl_type(ty: &IrType) -> Option<cranelift_codegen::ir::Type> {
         IrType::F32  => Some(cl::F32),
         IrType::F64  => Some(cl::F64),
         IrType::Bool => Some(cl::I8),
+        IrType::String => Some(cl::I64), // String header pointer (64-bit)
         IrType::Ptr  => Some(cl::I64), // 64-bit target
         // dyn Trait: fat pointer (data_ptr, vtable_ptr) — passed as a pointer to
         // a two-word block, so the ABI type is the same as a regular pointer.
@@ -680,6 +681,12 @@ fn emit_const(
         },
         ConstVal::Bool(bv) => b.ins().iconst(cl_ty, *bv as i64),
         ConstVal::None     => b.ins().iconst(cl_ty, 0),
+        ConstVal::String(_s) => {
+            // String literals are not yet fully supported in JIT.
+            // For now, emit a null pointer.
+            // TODO: Implement string pool or data sections for string literals
+            b.ins().iconst(cl_ty, 0)
+        }
     })
 }
 

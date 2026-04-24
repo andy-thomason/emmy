@@ -64,8 +64,10 @@ pub enum IrType {
     F32,
     F64,
     Bool,
+    /// String: refcounted heap pointer to (refcount, len, ptr) header.
+    String,
     /// Opaque pointer (target pointer size) — used for aggregates, slices,
-    /// strings, function references, and channels.
+    /// function references, and channels.
     Ptr,
     /// A `dyn TraitName` fat pointer: (data_ptr, vtable_ptr) stored as two
     /// consecutive pointer-sized words on the caller's stack.  In Cranelift
@@ -143,6 +145,8 @@ pub enum ConstVal {
     Float(f64),
     Bool(bool),
     None,
+    /// String literal (raw source including quotes).
+    String(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -1146,12 +1150,12 @@ impl<'src, 'ir> Lowerer<'src, 'ir> {
                 struct_ptr
             }
 
-            ExprKind::StringLiteral(_) => {
+            ExprKind::StringLiteral(s) => {
                 let dst = b.fresh();
                 b.emit(expr.src, InstKind::Const {
                     dst,
-                    val: ConstVal::None, // placeholder; codegen emits a string ref
-                    ty:  IrType::Ptr,
+                    val: ConstVal::String(s.to_string()),
+                    ty:  IrType::String,
                 });
                 dst
             }
@@ -1317,6 +1321,7 @@ impl fmt::Display for IrType {
             IrType::F32  => write!(f, "f32"),
             IrType::F64  => write!(f, "f64"),
             IrType::Bool => write!(f, "bool"),
+            IrType::String => write!(f, "str"),
             IrType::Ptr  => write!(f, "ptr"),
             IrType::Dyn { trait_name } => write!(f, "dyn {trait_name}"),
             IrType::Void => write!(f, "void"),
@@ -1386,6 +1391,7 @@ impl fmt::Display for ConstVal {
             ConstVal::Float(v)     => write!(f, "{v}"),
             ConstVal::Bool(b)      => write!(f, "{b}"),
             ConstVal::None         => write!(f, "none"),
+            ConstVal::String(s)    => write!(f, "{s}"),
         }
     }
 }
